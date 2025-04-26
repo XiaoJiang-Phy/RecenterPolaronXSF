@@ -1,17 +1,49 @@
-# RecenterPolaronXSF
+# XSF Datagrid Centering and Force Removal Tool
 
-A simple Python script to recenter 3D grid data, such as polaron real-space distributions from EPW calculations, within XSF files. It fixes visualization artifacts caused by periodic boundary condition (PBC) wrapping by applying a circular shift using NumPy.
+This Python script (`center_xsf.py`) processes XCrySDen Structure Format (XSF) files to facilitate visualization, particularly for data affected by periodic boundary conditions.
 
-When calculating properties like polaron distributions in periodic systems, the localized feature might be centered near the cell boundary or origin. Due to PBC, visualization tools showing only a single unit cell will often display this feature as fragmented across the corners or edges of the cell box. This script rearranges the data within the grid to present a centered, contiguous view of the feature within a single cell.
+## Features
 
-## Requirements
+*   **Recenter 3D Datagrid**: Reads a specified `DATAGRID_3D` block (or the first one found) and applies a periodic shift (`numpy.roll`) to center the data within the unit cell. This is useful for visualizing features like polarons that might wrap around boundaries.
+*   **Remove Atomic Forces**: Reads the `PRIMCOORD` block, removes force components (typically the last three columns) from each atom coordinate line, and sets the force flag (second number after `PRIMCOORD`) to `0`.
+*   **Preserve File Structure**: Retains the overall XSF format, including other data blocks and header/footer information.
+*   **Flexible Datagrid Selection**: Allows specifying a target `DATAGRID_3D` block by name if the input file contains multiple blocks.
 
-* Python 3.x
-* NumPy
+## Dependencies
+
+*   Python 3.x
+*   NumPy (`pip install numpy`)
 
 ## Usage
 
-Run the script from your terminal. You need to provide the input XSF file path and the desired output file path. Optionally, you can specify the name of the data grid if your XSF file contains multiple `DATAGRID_3D` blocks.
+The script is primarily designed to be run from the command line:
 
 ```bash
-python center_xsf.py <input.xsf> <output_centered.xsf> [datagrid_name]
+python center_xsf.py <input.xsf> <output.xsf> [datagrid_name]
+```
+
+**Arguments:**
+
+*   `<input.xsf>`: (Required) Path to the input XSF file.
+*   `<output.xsf>`: (Required) Path where the processed XSF file will be saved.
+*   `[datagrid_name]`: (Optional) The specific name of the `DATAGRID_3D` block to process (e.g., `charge_density`). If omitted, the script will process the *first* `DATAGRID_3D` block encountered.
+
+**Example:**
+
+```bash
+# Process the first datagrid in polaron_edge.xsf and save to polaron_centered.xsf
+python center_xsf.py psir_plrn.xsf  psir_plrn_centered.xsf
+
+```
+
+If run without any command-line arguments, the script will use default filenames (`psir_plrn.xsf` as input, `psir_plrn_centered.xsf` as output) and process the first datagrid found.
+
+## Technical Notes
+
+*   **Data Order**: Assumes the 3D data in the XSF file is stored with the Z-axis changing fastest (Fortran-like order, `order='F'` in NumPy).
+*   **Atom Coordinate Parsing**: Identifies atom lines in `PRIMCOORD` as lines containing at least 4 columns. It retains the first 4 columns (AtomType, X, Y, Z) and discards the rest.
+*   **Error Handling**: Includes basic checks for file existence, datagrid presence, dimension parsing, and data point counts (with warnings/adjustments for mismatches).
+
+## License
+
+MIT License
