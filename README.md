@@ -1,4 +1,4 @@
-# RecenterPolaronXSF (or your chosen repository name)
+# RecenterPolaronXSF
 
 A simple Python script to recenter 3D grid data, such as polaron real-space distributions from EPW calculations, within XSF files. It fixes visualization artifacts caused by periodic boundary condition (PBC) wrapping by applying a circular shift using NumPy.
 
