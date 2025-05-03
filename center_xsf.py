@@ -28,7 +28,7 @@ ELEMENTS = {
     111: 'Rg', 112: 'Cn', 113: 'Nh', 114: 'Fl', 115: 'Mc', 116: 'Lv', 117: 'Ts', 118: 'Og'
 }
 
-def process_xsf(input_filename, output_filename, datagrid_name=None):
+def process_xsf(input_filename, output_filename, datagrid_name=None, scale_factor=None):
     """
     Reads an XSF file, periodically shifts the specified 3D datagrid to center it,
     removes force components from PRIMCOORD, and writes the result to a new file.
@@ -39,6 +39,8 @@ def process_xsf(input_filename, output_filename, datagrid_name=None):
         datagrid_name (str, optional): If the file contains multiple DATAGRID_3D blocks,
                                        specify the name of the block to process (e.g., 'charge_density').
                                        If None or the file has only one block, the first found block is processed.
+        scale_factor (float, optional): If provided, multiply all datagrid values by this factor to scale them.
+                                        If None, auto-scaling will be applied to bring maximum value to ~1.0.
     """
     try:
         with open(input_filename, 'r') as infile:
@@ -208,32 +210,21 @@ def process_xsf(input_filename, output_filename, datagrid_name=None):
 
     # 2. Data Loading and Reshaping
     try:
-        # Optional: Print number of points read vs expected
-        # print(f"Grid dimensions: {Nx}x{Ny}x{Nz} = {total_data_points} data points")
-        # print(f"Data points read: {len(datagrid_data_str)}")
-
         # Data point count correction
         if len(datagrid_data_str) != total_data_points:
             # Print the warning message about the mismatch
             print(f"Warning: Data point mismatch ({len(datagrid_data_str)} read vs {total_data_points} expected). Adjusting...")
             if len(datagrid_data_str) > total_data_points:
                 # Truncate extra data if more points were read
-                # print(f"Truncating {len(datagrid_data_str) - total_data_points} extra data points")
                 datagrid_data_str = datagrid_data_str[:total_data_points]
             else:
                 # Pad with zeros if fewer points were read
                 missing_points = total_data_points - len(datagrid_data_str)
-                # print(f"Padding {missing_points} missing data points with 0.0")
                 datagrid_data_str.extend(['0.0'] * missing_points)
 
         data_flat = np.array(datagrid_data_str, dtype=float)
 
-        # Crucial: Determine reshape order
-        # XSF usually has Z-axis changing fastest (Fortran/Column-major like for Z)
-        # Reshaping to (Nx, Ny, Nz) requires order='F'
-        # Reshaping to (Nz, Ny, Nx) could use order='C' (default)
-        # Assume we want axes 0, 1, 2 to correspond to X, Y, Z
-        # Therefore, use (Nx, Ny, Nz) with order='F'
+        # Reshape to 3D (Nx, Ny, Nz) with order='F' (Fortran-like, Z-axis changes fastest)
         data_3d = data_flat.reshape((Nx, Ny, Nz), order='F')
 
     except ValueError as e:
@@ -244,7 +235,6 @@ def process_xsf(input_filename, output_filename, datagrid_name=None):
         print(f"An unexpected error occurred during data processing: {e}")
         return
 
-
     # 3. Calculate Shift Amount
     shift_x = Nx // 2
     shift_y = Ny // 2
@@ -254,11 +244,30 @@ def process_xsf(input_filename, output_filename, datagrid_name=None):
     # Assume axes 0, 1, 2 correspond to X, Y, Z (determined by reshape)
     shifted_data_3d = np.roll(data_3d, shift=(shift_x, shift_y, shift_z), axis=(0, 1, 2))
 
-    # 5. Flatten Data and Format
-    # Crucial: Use the corresponding order when flattening
-    shifted_data_flat = shifted_data_3d.flatten(order='F')
+    # 5. Scale the data
+    # Determine max value for scaling info
+    max_value = np.max(np.abs(shifted_data_3d))
+    print(f"Original data maximum value: {max_value:.6E}")
+    
+    # Determine scale factor
+    if scale_factor is None:
+        # Auto-scaling: target maximum value of ~10.0
+        if max_value > 0:
+            scale_factor = 10.0 / max_value
+        else:
+            scale_factor = 10.0
+        print(f"Auto-scaling factor: {scale_factor:.6E}")
+    else:
+        print(f"Applying specified scaling factor: {scale_factor:.6E}")
+    
+    # Apply scaling
+    scaled_data_3d = shifted_data_3d * scale_factor
+    print(f"Scaled data maximum value: {np.max(np.abs(scaled_data_3d)):.6f}")
+    
+    # 6. Flatten Data
+    scaled_data_flat = scaled_data_3d.flatten(order='F')
 
-    # 6. Write Output XSF File
+    # 7. Write Output XSF File
     try:
         with open(output_filename, 'w') as outfile:
             # Write original header and atom info (processing PRIMCOORD)
@@ -316,7 +325,6 @@ def process_xsf(input_filename, output_filename, datagrid_name=None):
                             else:
                                 outfile.write(line + '\n') # Write original line + newline
                             primcoord_header_line_processed = True
-                            # Optional print: print(f"PRIMCOORD block: {primcoord_atom_count} atoms")
                         except (ValueError, IndexError):
                             # Handle cases where the line might not be the expected format
                             outfile.write(line + '\n')
@@ -328,15 +336,15 @@ def process_xsf(input_filename, output_filename, datagrid_name=None):
                         # Identify atom coordinate lines based on features: at least 4 columns
                         if len(parts) >= 4:
                             try:
-                                # 尝试将原子类型转换为元素符号
+                                # Try to convert atom type to element symbol
                                 atom_type = parts[0]
                                 try:
                                     atom_number = int(atom_type)
-                                    # 如果成功转换为数字，则查找元素符号
+                                    # If successfully converted to number, look up element symbol
                                     if atom_number in ELEMENTS:
                                         atom_type = ELEMENTS[atom_number]
                                 except ValueError:
-                                    # 如果已经是元素符号，保持不变
+                                    # If already an element symbol, keep it unchanged
                                     pass
                                     
                                 x = float(parts[1])
@@ -345,9 +353,6 @@ def process_xsf(input_filename, output_filename, datagrid_name=None):
                                 # Example format: AtomType (left-aligned, 3 chars), Coords (fixed decimal)
                                 modified_line = f"  {atom_type:<3} {x:>14.9f} {y:>14.9f} {z:>14.9f}"
                                 outfile.write(modified_line + '\n')
-                                # Optional print for first atom: 
-                                # if primcoord_lines_processed == 0:
-                                #    print(f"Processing atom line: '{line}' -> '{modified_line}'")
                             except (ValueError, IndexError):
                                  # If conversion fails, write original line
                                  outfile.write(line + '\n')
@@ -382,13 +387,13 @@ def process_xsf(input_filename, output_filename, datagrid_name=None):
                 for header_line in datagrid_header[:-1]: 
                     outfile.write(header_line + '\n')
             else:
-                 print("Error: Internal processing error - datagrid_header is empty during write.")
-                 # Potentially exit or handle error
+                print("Error: Internal processing error - datagrid_header is empty during write.")
+                # Potentially exit or handle error
 
-            # Write the shifted data
+            # Write the scaled data
             data_points_per_line = 6 # Number of data points per line
-            for i in range(0, len(shifted_data_flat), data_points_per_line):
-                line_data = shifted_data_flat[i:min(i + data_points_per_line, len(shifted_data_flat))]
+            for i in range(0, len(scaled_data_flat), data_points_per_line):
+                line_data = scaled_data_flat[i:min(i + data_points_per_line, len(scaled_data_flat))]
                 # format_str = " {:16.8E}" * len(line_data) # Example format
                 format_str = " ".join(["{:.8E}"] * len(line_data)) # Simpler formatting
                 outfile.write(format_str.format(*line_data) + '\n') # Ensure only one newline at the end
@@ -405,16 +410,16 @@ def process_xsf(input_filename, output_filename, datagrid_name=None):
             if datagrid_block_end:
                 outfile.write(datagrid_block_end + '\n')
             else:
-                 print("Warning: END_BLOCK_DATAGRID_3D marker missing, file might be incomplete.")
+                print("Warning: END_BLOCK_DATAGRID_3D marker missing, file might be incomplete.")
 
             
             # Write the file footer (any content after the target block)
             for footer_line in footer_lines:
                 outfile.write(footer_line + '\n')
 
-        print(f"Processing complete. Centered data written to '{output_filename}'")
-        # print(f"- Force components removed from PRIMCOORD.")
-        # print(f"- XSF block structure preserved.")
+        print(f"Processing complete. Centered and scaled data written to '{output_filename}'")
+        print(f"- Applied scaling factor: {scale_factor:.6E}")
+        print(f"- Scaled data maximum value: {np.max(np.abs(scaled_data_3d)):.6f}")
 
     except IOError as e:
         print(f"Error: Could not write to output file '{output_filename}' - {e}")
@@ -430,26 +435,46 @@ if __name__ == "__main__":
     default_input_file = "psir_plrn.xsf"  # Default input filename
     default_output_file = "psir_plrn_centered.xsf" # Default output filename
     default_grid_to_process = None # Process the first found DATAGRID_3D
+    default_scale_factor = None  # Auto-scaling by default
 
     input_file = default_input_file
     output_file = default_output_file
     grid_to_process = default_grid_to_process
+    scale_factor = default_scale_factor
 
     # --- Command Line Argument Parsing --- 
-    if len(sys.argv) == 3:
+    if len(sys.argv) >= 3:
         input_file = sys.argv[1]
         output_file = sys.argv[2]
-    elif len(sys.argv) == 4:
-        input_file = sys.argv[1]
-        output_file = sys.argv[2]
-        grid_to_process = sys.argv[3]
-    elif len(sys.argv) != 1: # If run with arguments, but not 3 or 4
-        print(f"Usage: python {sys.argv[0]} <input.xsf> <output.xsf> [datagrid_name]")
+        
+        if len(sys.argv) >= 4:
+            # Third argument could be either grid name or scale factor
+            try:
+                # Try to interpret as scale factor (float)
+                scale_factor = float(sys.argv[3])
+                print(f"Using specified scaling factor: {scale_factor}")
+                
+                # If there's a 5th argument, it's the grid name
+                if len(sys.argv) >= 5:
+                    grid_to_process = sys.argv[4]
+            except ValueError:
+                # Not a number, interpret as grid name
+                grid_to_process = sys.argv[3]
+                
+                # If there's a 5th argument, it's the scale factor
+                if len(sys.argv) >= 5:
+                    try:
+                        scale_factor = float(sys.argv[4])
+                        print(f"Using specified scaling factor: {scale_factor}")
+                    except ValueError:
+                        print(f"Warning: Could not parse '{sys.argv[4]}' as a scaling factor. Using auto-scaling.")
+    elif len(sys.argv) != 1: # If run with arguments, but incorrect number
+        print(f"Usage: python {sys.argv[0]} <input.xsf> <output.xsf> [scale_factor|datagrid_name] [datagrid_name|scale_factor]")
         sys.exit(1) # Exit if arguments are incorrect
     else:
         # No arguments provided, use defaults and inform the user
-        print(f"Usage: python {sys.argv[0]} <input.xsf> <output.xsf> [datagrid_name]")
-        print(f"Using default settings: Input='{input_file}', Output='{output_file}'")
+        print(f"Usage: python {sys.argv[0]} <input.xsf> <output.xsf> [scale_factor|datagrid_name] [datagrid_name|scale_factor]")
+        print(f"Using default settings: Input='{input_file}', Output='{output_file}', Auto-scaling")
         
     # --- Execute Processing --- 
-    process_xsf(input_file, output_file, datagrid_name=grid_to_process)
+    process_xsf(input_file, output_file, datagrid_name=grid_to_process, scale_factor=scale_factor)
