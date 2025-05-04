@@ -1,4 +1,4 @@
-# XSF Datagrid Centering and Force Removal Tool
+# RecenterPolaronXSF
 
 This Python script (`center_xsf.py`) processes XCrySDen Structure Format (XSF) files to facilitate visualization, particularly for data affected by periodic boundary conditions.
 
