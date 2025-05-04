@@ -251,7 +251,34 @@ def process_xsf(input_filename, output_filename, datagrid_name=None):
             primcoord_lines_processed = 0
             primcoord_header_line_processed = False # Flag to track if the atom count line is processed
 
+            # Add tracking for PRIMVEC
+            primvec_lines = []
+            in_primvec = False
+            primvec_lines_count = 0
+            convvec_added = False
+
             for line in header_lines:
+                if "PRIMVEC" in line:
+                    in_primvec = True
+                    primvec_lines = [line]
+                    outfile.write(line + '\n')
+                    continue
+                
+                if in_primvec:
+                    primvec_lines.append(line)
+                    outfile.write(line + '\n')
+                    primvec_lines_count += 1
+                    # After reading 3 lines (3 vectors), add CONVVEC block with the same values
+                    if primvec_lines_count == 3:
+                        in_primvec = False
+                        # Add CONVVEC immediately after PRIMVEC with the same coordinates
+                        outfile.write("CONVVEC\n")
+                        # Write the same vector values from PRIMVEC to CONVVEC
+                        for i in range(1, 4):  # Skip the PRIMVEC line itself
+                            outfile.write(primvec_lines[i] + '\n')
+                        convvec_added = True
+                    continue
+
                 if "PRIMCOORD" in line:
                     in_primcoord = True
                     outfile.write(line + '\n') # Add newline uniformly
